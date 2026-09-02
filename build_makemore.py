@@ -125,7 +125,8 @@ nll = -log_likelihood
 #normalizing it 
 #print(f'{nll/n=}')
 
-#Build neural net for the Bigram problem
+
+#==========================Build neural net for the Bigram problem========================
 #Create the training set of bigrams(x,y)
 xs, ys = [], []
 
@@ -136,19 +137,64 @@ for w in words:
         ix2 = stoi[ch2]
         xs.append(ix1)
         ys.append(ix2)
-
 xs = torch.tensor(xs)
 ys = torch.tensor(ys)
+num = xs.nelement()
+
+print("number of examples: ", num)
 
 import torch.nn.functional as F
 
-xenc = F.one_hot(xs, num_classes = 27).float()
-#one hot is the function that will allow us to have the inputs as the vector [0, 0 , 1] for example to represent the 3rd item of 3 classes
-#casting it to .float() is important step because the NN needs the input to be in float for the rest of the math to take place
-W = torch.randn(27,1)
-print(f'{xenc.shape=}')
-print(xenc @ W)
+#randomly initialize 27 neuron's weights, each neuron receives 27 inputs
+g = torch.Generator().manual_seed(2147483647)
+W = torch.randn((27,27), generator = g, requires_grad = True)
+#print(f'{xenc.shape=}')
+#print(xenc @ W)
+
 # @ operation is the dot product, it does follow broadcasting rules but a little different
 # example: (5, 27) @ (27, 27) -> (5, 27)
-# (M, K) @ (K, N) --> (M, N)
-# (B, M, K) @ (K, N) --> (B, M, K) @ (1, K, N) --> (B, M, N)
+# (M, K) @ (K, N) --> (M, N)       No broadcasting here
+# (B, M, K) @ (K, N) --> (B, M, K) @ (1, K, N) --> (B, M, N)      Broadcasting here
+
+#Gradient descent
+for k in range(100):
+    #----FORWARD PASS
+    xenc = F.one_hot(xs, num_classes = 27).float()
+    #one hot is the function that will allow us to have the inputs as the vector [0, 0 , 1] for example to represent the 3rd item of 3 classes
+    #casting it to .float() is important step because the NN needs the input to be in float for the rest of the math to take place
+    logits = xenc @ W #predict log-counts
+    #Softmax
+    counts = logits.exp() #counts, equivalent to N, and exp to have no negative number
+    probs = counts/counts.sum(dim = 1, keepdims = True) #probabilities for next character
+    loss = -probs[torch.arange(xs.shape[0]), ys].log().mean() + 0.01*(W**2).mean() 
+    #adding regularization term that is trying to make W values close to zero
+    print(loss.item())
+
+    #---BACKWARD PASS 
+    #first thing reset grad to zero
+    W.grad = None 
+    loss.backward()
+
+    #---Update param
+    W.data += -50*W.grad
+
+
+#finally sampling from the neural net model 
+g = torch.Generator().manual_seed(2147483647)
+
+for i in range(5):
+    out = []
+    ix = 0
+
+    while True:
+        xenc = F.one_hot(torch.tensor([ix]), num_classes = 27).float()
+        logits = xenc @ W
+        counts = logits.exp()
+        p = counts/counts.sum(dim = 1, keepdims = True)
+
+        ix = torch.multinomial(p, num_samples = 1, replacement = True, generator = g).item()
+        out.append(itos[ix])
+
+        if ix == 0:
+            break
+    print(''.join(out))
