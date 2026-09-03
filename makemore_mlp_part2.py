@@ -99,7 +99,9 @@ lr = []
 losses = []
 steps = []
 lri = 10**-1
-for i in range(30000):
+max_steps = 200000
+
+for i in range(max_steps):
     #minibatch construct
     ix = torch.randint(0, Xtr.shape[0], (32,))
 
@@ -113,7 +115,7 @@ for i in range(30000):
     #!!!! Note probs = F.softmax(logits, dim = 1) is not needed because F.cross_entropy expects logits 
     #it does softmax internally
     data_loss = F.cross_entropy(logits, Ytr[ix])
-    l2_penalty =  + 0.1*l2_reg/total_elements 
+    l2_penalty =  + 0.5*l2_reg/total_elements 
     loss = data_loss + l2_penalty
     #print(loss.item())
 
@@ -124,7 +126,11 @@ for i in range(30000):
 
     #lri = lrs[i]
     #lri = 0.1 if i < 10000 else 0.01
-    lri = 0.99*lri
+    #lri = 0.99*lri --> too aggressive 
+
+    if i % 10000 == 0:
+        lri = 0.99*lri
+        print(f'{i:7d}/{max_steps:7d}: {loss.item(): .4f}')
     #update parameters
     for p in parameters:
         p.data += -lri*p.grad 
