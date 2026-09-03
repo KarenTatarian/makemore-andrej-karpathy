@@ -45,12 +45,19 @@ n_hidden = 200 #number of neurons in the hidden layer of MLP
 
 g = torch.Generator().manual_seed(2147483647) # for reproducibility
 C  = torch.randn((vocab_size, n_embd),            generator=g)
-W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) 
-b1 = torch.randn(n_hidden,                        generator=g) 
-W2 = torch.randn((n_hidden, vocab_size),          generator=g) 
-b2 = torch.randn(vocab_size,                      generator=g) 
+W1 = torch.randn((n_embd * block_size, n_hidden), generator=g) * (5/3)/(n_embd*block_size)**0.5 #0.2
+#b1 = torch.randn(n_hidden,                        generator=g) * 0.01 #setting it very small to get a little bit of entropy (variation and diversity in initialization to help optimization)
+W2 = torch.randn((n_hidden, vocab_size),          generator=g) * 0.01
+b2 = torch.randn(vocab_size,                      generator=g) * 0 #equivalent to torch.zeros(vocab_size), zero initialization does not mean it is frozen, b2 still gets trained
+ 
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
 
-parameters = [C, W1, b1, W2, b2]
+bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running = torch.ones((1, n_hidden))
+
+parameters = [C, W1, W2, b2, bngain, bnbias]
+
 print(sum(p.nelement() for p in parameters)) # number of parameters in total
 for p in parameters:
   p.requires_grad = True
@@ -67,8 +74,21 @@ for i in range(max_steps):
     #forward pass
     emb = C[Xb] #embed the characters into vector
     embcat = emb.view(emb.shape[0], -1) #concatenate the vectors
-    hpreact = embcat @ W1 + b1 #pre-activation layer
-    h = torch.tanh(hpreact)
+
+    #Linear layer
+    hpreact = embcat @ W1 #+ b1 #hidden layer pre-activation layer
+
+    #batch normalization 
+    bnmeani = hpreact.mean(0, keepdim = True)
+    bnstdi = hpreact.std(0, keepdim = True) + 0.0000001 #added epsilon, not needed for this use case
+    hpreact = bngain*(hpreact - bnmeani)/bnstdi + bnbias
+
+    with torch.no_grad():
+        bnmean_running = 0.999*bnmean_running + 0.001*bnmeani #0.001 here is the momentum
+        bnstd_running = 0.999*bnstd_running + 0.001*bnstdi
+
+    h = torch.tanh(hpreact) #non-linear activation layer 
+
     logits = h @ W2 + b2
     loss = F.cross_entropy(logits, Yb)
 
@@ -90,6 +110,22 @@ for i in range(max_steps):
 plt.plot(lossi)
 plt.show()
 
+"""
+#calibrate the batch norm at the end of training 
+#instead of doing that, it can be calculated while running the training 
+#no longer need this because bnmean is almost equal to bnmean_running 
+#same for bnstd_running 
+with torch.no_grad():
+    #pass the training set through
+    emb = C[Xtr]
+    embcat = emb.view(emb.shape[0], -1)
+    hpreact = embcat @ W1 + b1
+    #measure the mean/std over the entire the training set 
+    bnmean = hpreact.mean(0, keepdim = True)
+    bnstd = hpreact.std(0, keepdim = True)
+
+"""
+
 @torch.no_grad() # this decorator disables gradient tracking and it tells pytorch to not require grad and we will not be performing backward
 def split_loss(split):
   x,y = {
@@ -99,7 +135,10 @@ def split_loss(split):
   }[split]
   emb = C[x] # (N, block_size, n_embd)
   embcat = emb.view(emb.shape[0], -1) # concat into (N, block_size * n_embd)
-  hpreact = embcat @ W1 + b1
+  hpreact = embcat @ W1 #+ b1
+  #hpreact = bngain*(hpreact - hpreact.mean(0, keepdim = True))/hpreact.std(0, keepdim = True) + bnbias
+  #hpreact = bngain*(hpreact - bnmean)/bnstd + bnbias
+  hpreact = bngain*(hpreact - bnmean_running)/bnstd_running + bnbias
   h = torch.tanh(hpreact) # (N, n_hidden)
   logits = h @ W2 + b2 # (N, vocab_size)
   loss = F.cross_entropy(logits, y)
@@ -116,7 +155,7 @@ for _ in range(20):
     context = [0]*block_size 
     while True:
         emb = C[torch.tensor([context])]
-        h = torch.tanh(emb.view(1, -1) @ W1 + b1)
+        h = torch.tanh(emb.view(1, -1) @ W1) #+ b1)
         logits = h @ W2 + b2
         probs = F.softmax(logits, dim = 1)
         ix = torch.multinomial(probs, num_samples = 1, generator = g).item()
