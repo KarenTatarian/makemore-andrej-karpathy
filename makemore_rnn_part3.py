@@ -34,9 +34,9 @@ random.shuffle(words)
 n1 = int(0.8*len(words))
 n2 = int(0.9*len(words))
 
-Xtr, Ytr = build_dataset(words[:n1])
-Xdev, Ydev = build_dataset(words[n1:n2])
-Xte, Yte = build_dataset(words[n2:])
+Xtr, Ytr = build_dataset(words[:n1]) #80%
+Xdev, Ydev = build_dataset(words[n1:n2]) #10%
+Xte, Yte = build_dataset(words[n2:]) #10%
 
 #MLP revisited
 g = torch.Generator().manual_seed(2147483647)
@@ -175,7 +175,7 @@ class Linear:
         self.weight = torch.randn((fan_in, fan_out), generator = g)/fan_in**0.5 
         #fan_in and fan_out here giving the dimensions fan_in x fan_out with mean around 0 and std 1 but then with 1/sqrt(fan_in) distribution is scaled down 
         #the (1/fan_in**0.5) factor can be removed once normalization layers are added everywhere 
-        
+
         self.bias = torch.zeros(fan_out) if bias else None 
 
     def __call__(self, x):
@@ -240,7 +240,7 @@ g = torch.Generator().manual_seed(2147483647) #for reproducibiltiy
 C = torch.randn((vocab_size, n_embd), generator = g)
 layers = [
     Linear(n_embd*block_size, n_hidden), Tanh(),
-    Linear(n_hidden, n_hidden), BatchNorm1d(n_hidden), Tanh(),
+    Linear(n_hidden, n_hidden), BatchNorm1d(n_hidden), Tanh(), #can also here set Linear(n_hidden, n_hidden, bias = False) since with normalization bias will be substracted out 
     Linear(n_hidden, n_hidden), BatchNorm1d(n_hidden), Tanh(),
     Linear(n_hidden, n_hidden), BatchNorm1d(n_hidden), Tanh(),
     Linear(n_hidden, n_hidden), BatchNorm1d(n_hidden), Tanh(),
@@ -274,6 +274,7 @@ batch_size = 32
 lossi = []
 ud = []
 
+#optimizing with stochastic gradient descent
 for i in range(max_steps):
     ix = torch.randint(0, Xtr.shape[0], (batch_size, ), generator = g)
     Xb, Yb = Xtr[ix], Ytr[ix]
