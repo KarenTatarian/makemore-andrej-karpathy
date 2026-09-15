@@ -312,6 +312,54 @@ cmp('emb', demb, emb)
 cmp('C', dC, C)
 
 
+# Exercise 2: backprop through cross_entropy but all in one go
+# to complete this challenge look at the mathematical expression of the loss,
+# take the derivative, simplify the expression, and just write it out
+
+# forward pass
+
+# before:
+# logit_maxes = logits.max(1, keepdim=True).values
+# norm_logits = logits - logit_maxes # subtract max for numerical stability
+# counts = norm_logits.exp()
+# counts_sum = counts.sum(1, keepdims=True)
+# counts_sum_inv = counts_sum**-1 # if I use (1.0 / counts_sum) instead then I can't get backprop to be bit exact...
+# probs = counts * counts_sum_inv
+# logprobs = probs.log()
+# loss = -logprobs[range(n), Yb].mean()
+
+# now:
+loss_fast = F.cross_entropy(logits, Yb)
+print(loss_fast.item(), 'diff:', (loss_fast - loss).item())
+
+#backward pass
+""" 
+My solution
+
+#math on paper:
+#probs = py = exp(logity)/sum(exp(logitk) over all k)
+#dL/dlogitj = (dL/dprobs)*(dprobs/dlogitj)
+#dL/dlogitj = -(1/probs)(dprobs/dlogitj)
+#dprobs/dlogitj = (d(exp(logity))/dlogitj)(sum) - dsum(exp(logity))) / (sum^2)
+#case 1 : j = y
+#dprobs/dlogitj = py( 1- py) 
+#dL/dlogitj = py - 1 
+#case 2 : j not y
+#dprobs/dlogitj = - pjpy #since d(exp(logity))/dlogitj = 0 
+#dL/dlogitj = pj
+#so dL/dlogitj = pj - Yb[j] #since Yb[j] is 0 if y is not j and is 1 if y = j
+#finally since loss = 1/n(the summation of - log(pj)) add the 1/n factor
+
+
+yb = F.one_hot(Yb, num_classes = probs.shape[1])
+dlogits =  (1.0/n)*(probs - yb)
+cmp('logits', dlogits, logits)
+"""
+
+"""
+My result 
+logits          | exact: False | approximate: True  | maxdiff: 5.3551048040390015e-09
+"""
 
 
 
