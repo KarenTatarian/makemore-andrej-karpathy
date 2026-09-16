@@ -361,6 +361,52 @@ My result
 logits          | exact: False | approximate: True  | maxdiff: 5.3551048040390015e-09
 """
 
+#the loss for a batch is the average loss of all examples 
+dlogits = F.softmax(logits, 1) 
+dlogits[range(n), Yb] -= 1
+dlogits /= n
+cmp('logits', dlogits, logits)
+#logits          | exact: False | approximate: True  | maxdiff: 6.51925802230835e-09
+#dlogits make the system pull up (+ve) on the probability of the correct index and pull down on the wrong ones 
+plt.figure(figsize=(4, 4))
+plt.imshow(dlogits.detach(), cmap='gray')
+#plt.show()
 
+# Exercise 3: backprop through batchnorm but all in one go
+# to complete this challenge look at the mathematical expression of the output of batchnorm,
+# take the derivative w.r.t. its input, simplify the expression, and just write it out
 
+# forward pass
 
+# before:
+# bnmeani = 1/n*hprebn.sum(0, keepdim=True)
+# bndiff = hprebn - bnmeani
+# bndiff2 = bndiff**2
+# bnvar = 1/(n-1)*(bndiff2).sum(0, keepdim=True) # note: Bessel's correction (dividing by n-1, not n)
+# bnvar_inv = (bnvar + 1e-5)**-0.5
+# bnraw = bndiff * bnvar_inv
+# hpreact = bngain * bnraw + bnbias
+
+# now:
+hpreact_fast = bngain * (hprebn - hprebn.mean(0, keepdim=True)) / torch.sqrt(hprebn.var(0, keepdim=True, unbiased=True) + 1e-5) + bnbias
+print('max diff:', (hpreact_fast - hpreact).abs().max())
+# backward pass
+
+# before we had:
+# dbnraw = bngain * dhpreact
+# dbndiff = bnvar_inv * dbnraw
+# dbnvar_inv = (bndiff * dbnraw).sum(0, keepdim=True)
+# dbnvar = (-0.5*(bnvar + 1e-5)**-1.5) * dbnvar_inv
+# dbndiff2 = (1.0/(n-1))*torch.ones_like(bndiff2) * dbnvar
+# dbndiff += (2*bndiff) * dbndiff2
+# dhprebn = dbndiff.clone()
+# dbnmeani = (-dbndiff).sum(0)
+# dhprebn += 1.0/n * (torch.ones_like(hprebn) * dbnmeani)
+
+# calculate dhprebn given dhpreact (i.e. backprop through the batchnorm)
+# (you'll also need to use some of the variables from the forward pass up above)
+#dbnvar = (2.0/(n-1)) *(hprebn - bnmeani - (1.0/n)*(hprebn - 1)).sum(0)
+#dxhat = (1.0/bnvar)*((bnvar**0.5)*(1.0 - 1.0/n) + 2.0/n*(dbnvar)*(bnvar + bnmeani))
+#dhprebn = dhpreact* (bngain*dxhat) 
+dhprebn = bngain*bnvar_inv/n * (n*dhpreact - dhpreact.sum(0) - n/(n-1)*bnraw*(dhpreact*bnraw).sum(0))
+cmp('hprebn', dhprebn, hprebn) 
