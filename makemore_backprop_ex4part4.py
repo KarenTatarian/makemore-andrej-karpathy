@@ -153,8 +153,8 @@ with torch.no_grad():
  #       break
 
 # useful for checking your gradients
-for p,g in zip(parameters, grads):
-   cmp(str(tuple(p.shape)), g, p)
+#for p,g in zip(parameters, grads):
+#   cmp(str(tuple(p.shape)), g, p)
 
 # calibrate the batch norm at the end of training
 with torch.no_grad():
