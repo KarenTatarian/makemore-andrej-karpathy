@@ -149,12 +149,12 @@ with torch.no_grad():
       print(f'{i:7d}/{max_steps:7d}: {loss.item():.4f}')
     lossi.append(loss.log10().item())
 
-    if i >= 100: # TODO: delete early breaking when you're ready to train the full net
-        break
+ #   if i >= 100: # TODO: delete early breaking when you're ready to train the full net
+ #       break
 
 # useful for checking your gradients
-# for p,g in zip(parameters, grads):
-#   cmp(str(tuple(p.shape)), g, p)
+for p,g in zip(parameters, grads):
+   cmp(str(tuple(p.shape)), g, p)
 
 # calibrate the batch norm at the end of training
 with torch.no_grad():
