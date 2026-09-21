@@ -10,7 +10,8 @@ stoi = {s:i+1 for i,s in enumerate(chars)}
 stoi['.'] = 0
 itos = {i:s for s,i in stoi.items()}
 vocab_size = len(itos)
-block_size = 3 #context window size
+#block_size = 3 #context window size
+block_size = 8 #context window size
 
 #build dataset
 def build_dataset(words): 
@@ -78,9 +79,14 @@ class BatchNorm1d:
         #    Columns = different neurons/features
         # this is why we calculate mean of each column along the row dimensionality
         #so we end up with xmean having 1D row of all mean values of each feature
+        # previously we had designed it for 2D but now since have 3D (2 inputs, batch_size)
         if self.training:
-            xmean = x.mean(0, keepdim = True) #batch mean
-            xvar = x.var(0, keepdim = True, unbiased = True) #batch variance
+            if x.ndim == 2:
+                dim = 0
+            if x.ndim == 3:
+                dim = (0, 1)
+            xmean = x.mean(dim, keepdim = True) #batch mean #tuples can be passed on so mean is computed over multiple dimensions
+            xvar = x.var(dim, keepdim = True, unbiased = True) #batch variance
         else:
             xmean = self.running_mean 
             xvar = self.running_var
@@ -102,26 +108,93 @@ class Tanh:
     
     def parameters(self):
         return []
+
+class Embedding:
+    def __init__(self, num_embeddings, embedding_dim):
+        self.weight = torch.rand(num_embeddings, embedding_dim) # this is what was previously C
+    def __call__(self, IX):
+        self.out = self.weight[IX]
+        return self.out
+
+    def parameters(self):
+        return [self.weight]
+
+class FlattenConsecutive:
+    def __init__(self, n):
+        self.n = n #number of consecutive 
+
+    def __call__(self, x):
+        B, T, C = x.shape
+        x = x.view(B, T//self.n, C*self.n) # when we have // that is an element wise division 
+        if x.shape[1] == 1: 
+            x = x.squeeze(1) #squeeze in pytorch squeezes any dimension that is one, here we are specifying exactly which dimension to squeeze along 
+        #self.out = x.view(x.shape[0], -1)
+        self.out = x
+        return self.out 
+    def parameters(self):
+        return []
+
+class Sequential:
+    def __init__(self, layers):
+        self.layers = layers
+    
+    def __call__(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        self.out = x
+        return self.out 
+    
+    def parameters(self):
+        return [p for layer in self.layers for p in layer.parameters()]
+    
+
 torch.manual_seed(42); # seed rng for reproducibility
 
-n_embd = 10 #the dimensionality of the character embedding vectors
-n_hidden = 200 #number of neurons in the hidden layer of the MLP
+n_embd = 24 #the dimensionality of the character embedding vectors
+n_hidden = 128 #number of neurons in the hidden layer of the MLP
 
-C = torch.rand((vocab_size, n_embd))
-layers = [
-    Linear(n_embd * block_size, n_hidden, bias = False), BatchNorm1d(n_hidden), Tanh(),
-    Linear(n_hidden, vocab_size),
-]
+#C = torch.rand((vocab_size, n_embd))
+#model = Sequential([
+#    Embedding(vocab_size, n_embd),
+#    Flatten(),
+#    Linear(n_embd * block_size, n_hidden, bias = False), BatchNorm1d(n_hidden), Tanh(),
+#    Linear(n_hidden, vocab_size),
+#])
+
+# hierarchical network
+model = Sequential([
+  Embedding(vocab_size, n_embd),
+  FlattenConsecutive(2), Linear(n_embd * 2, n_hidden, bias=False), BatchNorm1d(n_hidden), Tanh(),
+  FlattenConsecutive(2), Linear(n_hidden*2, n_hidden, bias=False), BatchNorm1d(n_hidden), Tanh(),
+  FlattenConsecutive(2), Linear(n_hidden*2, n_hidden, bias=False), BatchNorm1d(n_hidden), Tanh(),
+  Linear(n_hidden, vocab_size),
+])
+
 
 with torch.no_grad():
     #last layer: make less confident (softmax layer)
-    layers[-1].weight *= 0.1 
+    model.layers[-1].weight *= 0.1 
 
-parameters = [C] + [p for layer in layers for p in layer.parameters()]
+#parameters = [p for layer in layers for p in layer.parameters()]
+parameters = model.parameters()
 print(sum(p.nelement() for p in parameters)) #total params
 for p in parameters:
     p.requires_grad = True
 
+#Note: 
+# 1) reminder in python: list(range(10))[::2] ==> gives us all the even integers in the list 
+#                        list(range(10))[1::2] ==> gives us all the odd integers in the list 
+# 2) reminder that right now we have the flatten acting as:
+#    e = torch.randn(4, 8, 10) ==> would lead to shape of (4, 80)
+# 3) 
+#    In x @ a, the last dimension of x must match the first dimension of a.
+#    The dimensions before the last one in x are preserved.
+#    For example looking at the shapes for x @ a:
+#    x: [4, 4, 20] @ [20, 100] -> [4, 4, 100]
+#    x: [8, 20]    @ [20, 100] -> [8, 100]
+#     So x @ a replaces x's last dimension (20) with a's last dimension (100)
+#    this is why we are building FlattenConsecutive so we can input batches of two 
+#.   before we were inputing [n_example, block_size, n_embedding] now it would be like number of examples, batch per example, ...
 
 #Optimization 
 max_steps = 200000
@@ -134,11 +207,13 @@ for i in range(max_steps):
     Xb, Yb = Xtr[ix], Ytr[ix]
 
     #forward pass 
-    emb = C[Xb]
-    x = emb.view(emb.shape[0], -1) #concatenate the vectors
-    for layer in layers:
-        x = layer(x)
-    loss = F.cross_entropy(x, Yb)
+    #emb = C[Xb]
+    #x = emb.view(emb.shape[0], -1) #concatenate the vectors
+    #x = Xb
+    #for layer in layers:
+    #    x = layer(x)
+    logits = model(Xb)
+    loss = F.cross_entropy(logits, Yb)
 
     #backward pass
     for p in parameters:
@@ -154,16 +229,20 @@ for i in range(max_steps):
     if i % 10000 == 0:
         print(f'{i:7d}/{max_steps:7d}: {loss.item(): .4f}')
     lossi.append(loss.log10().item())
+    
+    #ßbreak
 
-plt.plot(lossi)
+plt.plot(torch.tensor(lossi).view(-1, 1000).mean(1))
+#pytorch rearanges the array of floats into 2D tensor of 1000 columns and it can figure out the and then average across the rows --> to get a shape of [200]
 plt.show()
 
-plt.plot(torch.tensor(lossi).view(-1, 1000).mean(1)) #pytorch rearanges the array of floats into 2D tensor of 1000 columns and it can figure out the and then average across the rows --> to get a shape of [200]
+
 #put the layers into eval mode (needed for batchnorm especially)
-for layer in layers:
+for layer in model.layers:
     layer.training = False
 
 # evaluate the loss
+#usually you want to look at training and validation loss together 
 @torch.no_grad() # this decorator disables gradient tracking inside pytorch
 def split_loss(split):
   x,y = {
@@ -171,29 +250,38 @@ def split_loss(split):
     'val': (Xdev, Ydev),
     'test': (Xte, Yte),
   }[split]
-  emb = C[x] #(N, block_size, n_embd)
-  x = emb.view(emb.shape[0], -1) #conat into (N, block_size*n_embd)
-  for layer in layers:
-    x = layer(x)
-  loss = F.cross_entropy(x, y)
+  #emb = C[x] #(N, block_size, n_embd)
+  #x = emb.view(emb.shape[0], -1) #conat into (N, block_size*n_embd)
+  #for layer in layers:
+  #  x = layer(x)
+  logits = model(x)
+  loss = F.cross_entropy(logits, y)
   print(split, loss.item())
 
 split_loss('train')
 split_loss('val')
 
+"""
+performance log
+original (3 character context + 200 hidden neurons, 12K params): train 2.058, val 2.105
+context: 3 -> 8 (22K params): train 1.918, val 2.027
+flat -> hierarchical (22K params): train 1.941, val 2.029
+fix bug in batchnorm: train 1.912, val 2.022
+scale up the network: n_embd 24, n_hidden 128 (76K params): train 1.769, val 1.993
+"""
 
 # sample from the model
 for _ in range(20):
-    
     out = []
     context = [0] * block_size # initialize with all ...
     while True:
         # forward pass the neural net
-        emb = C[torch.tensor([context])] #(N, block_size, n_embd)
-        x = emb.view(emb.shape[0], -1) #conat into (N, block_size*n_embd)
-        for layer in layers:
-        x = layer(x)
-        logits = x
+        #emb = C[torch.tensor([context])] #(N, block_size, n_embd)
+        #x = emb.view(emb.shape[0], -1) #conat into (N, block_size*n_embd)
+        #x = torch.tensor([context])
+       # for layer in layers:
+        #    x = layer(x)
+        logits = model(torch.tensor([context]))
         probs = F.softmax(logits, dim=1)
         # sample from the distribution
         ix = torch.multinomial(probs, num_samples=1).item()
@@ -202,6 +290,6 @@ for _ in range(20):
         out.append(ix)
         # if we sample the special '.' token, break
         if ix == 0:
-        break
+            break
     
     print(''.join(itos[i] for i in out)) # decode and print the generated word
